@@ -1,110 +1,64 @@
+// src/pages/Auth.tsx
+
 import React, { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Package, Mail, Lock, User, Phone, MapPin } from 'lucide-react';
+import { Package, Mail, Lock } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client'; // Import your Supabase client
 
 const Auth = () => {
-  // Authentication states
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const { signIn, user } = useAuth(); 
+  const { signIn, signUp } = useAuth(); // MODIFIED: Get signUp from context
   const navigate = useNavigate();
   const { toast } = useToast();
-  
-  // New profile states
-  const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [address, setAddress] = useState('');
   const [activeTab, setActiveTab] = useState('signin');
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    
     const { error } = await signIn(email, password);
+    if (error) {
+      toast({ title: "Sign In Error", description: error.message, variant: "destructive" });
+    } else {
+      toast({ title: "Success", description: "Signed in successfully!" });
+      navigate('/dashboard');
+    }
+    setLoading(false);
+  };
+
+  // MODIFIED: Simplified handleSignUp function
+  const handleSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
     
+    // The trigger in the database now handles profile creation.
+    // We only need to call the authentication function.
+    const { error } = await signUp(email, password);
+
     if (error) {
       toast({
-        title: "Sign In Error",
+        title: "Sign Up Failed",
         description: error.message,
         variant: "destructive"
       });
     } else {
       toast({
-        title: "Success",
-        description: "Signed in successfully!"
-      });
-      navigate('/dashboard');
-    }
-    
-    setLoading(false);
-  };
-
-  const handleSignUp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    
-    try {
-      // 1. Create auth user
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email,
-        password,
-      });
-
-      if (authError) {
-        throw authError;
-      }
-
-      // 2. Create profile in database
-      const user = authData.user;
-      if (!user) {
-        throw new Error("User creation failed - no user data returned");
-      }
-
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .insert({
-          id: user.id,
-          name,
-          phone,
-          address,
-          email
-        });
-
-      if (profileError) {
-        throw profileError;
-      }
-
-      // 3. Show success and redirect
-      toast({
         title: "Account Created",
-        description: "Your account has been successfully created! Redirecting to login..."
+        description: "Please check your email for a verification link."
       });
-      
       // Reset form and switch to sign-in tab
-      setName('');
-      setPhone('');
-      setAddress('');
       setEmail('');
       setPassword('');
-      setTimeout(() => setActiveTab('signin'), 2000);
-    } catch (error: any) {
-      toast({
-        title: "Sign Up Failed",
-        description: error.message || 'An error occurred during sign up',
-        variant: "destructive"
-      });
-    } finally {
-      setLoading(false);
+      setActiveTab('signin');
     }
+    setLoading(false);
   };
 
   return (
@@ -139,35 +93,19 @@ const Auth = () => {
               </TabsList>
               
               <TabsContent value="signin">
-                <form onSubmit={handleSignIn} className="space-y-4">
+                <form onSubmit={handleSignIn} className="space-y-4 pt-4">
                   <div className="space-y-2">
                     <Label htmlFor="signin-email">Email</Label>
                     <div className="relative">
                       <Mail className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                      <Input
-                        id="signin-email"
-                        type="email"
-                        placeholder="Enter your email"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        className="pl-10"
-                        required
-                      />
+                      <Input id="signin-email" type="email" placeholder="Enter your email" value={email} onChange={(e) => setEmail(e.target.value)} className="pl-10" required />
                     </div>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="signin-password">Password</Label>
                     <div className="relative">
                       <Lock className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                      <Input
-                        id="signin-password"
-                        type="password"
-                        placeholder="Enter your password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className="pl-10"
-                        required
-                      />
+                      <Input id="signin-password" type="password" placeholder="Enter your password" value={password} onChange={(e) => setPassword(e.target.value)} className="pl-10" required />
                     </div>
                   </div>
                   <Button type="submit" className="w-full" disabled={loading}>
@@ -176,82 +114,21 @@ const Auth = () => {
                 </form>
               </TabsContent>
               
+              {/* MODIFIED: Simplified Sign Up form */}
               <TabsContent value="signup">
-                <form onSubmit={handleSignUp} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="signup-name">Full Name</Label>
-                    <div className="relative">
-                      <User className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                      <Input
-                        id="signup-name"
-                        type="text"
-                        placeholder="Enter your full name"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        className="pl-10"
-                        required
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="signup-phone">Phone</Label>
-                    <div className="relative">
-                      <Phone className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                      <Input
-                        id="signup-phone"
-                        type="tel"
-                        placeholder="Enter your phone number"
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                        className="pl-10"
-                        required
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="signup-address">Address</Label>
-                    <div className="relative">
-                      <MapPin className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                      <Input
-                        id="signup-address"
-                        type="text"
-                        placeholder="Enter your address"
-                        value={address}
-                        onChange={(e) => setAddress(e.target.value)}
-                        className="pl-10"
-                        required
-                      />
-                    </div>
-                  </div>
+                <form onSubmit={handleSignUp} className="space-y-4 pt-4">
                   <div className="space-y-2">
                     <Label htmlFor="signup-email">Email</Label>
                     <div className="relative">
                       <Mail className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                      <Input
-                        id="signup-email"
-                        type="email"
-                        placeholder="Enter your email"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        className="pl-10"
-                        required
-                      />
+                      <Input id="signup-email" type="email" placeholder="Enter your email" value={email} onChange={(e) => setEmail(e.target.value)} className="pl-10" required />
                     </div>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="signup-password">Password</Label>
                     <div className="relative">
                       <Lock className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                      <Input
-                        id="signup-password"
-                        type="password"
-                        placeholder="Create a password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className="pl-10"
-                        required
-                        minLength={6}
-                      />
+                      <Input id="signup-password" type="password" placeholder="Create a password (min. 6 characters)" value={password} onChange={(e) => setPassword(e.target.value)} className="pl-10" required minLength={6} />
                     </div>
                   </div>
                   <Button type="submit" className="w-full" disabled={loading}>
