@@ -1,9 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useNavigate } from 'react-router-dom';
-import { 
-    Package, TrendingUp, DollarSign, FileText, ShoppingCart, Receipt, 
-    Banknote, ShieldCheck, Users, Loader2, UserCheck, UserX 
+import {
+    Package, TrendingUp, DollarSign, FileText, ShoppingCart, Receipt,
+    Banknote, ShieldCheck, Users, Loader2, UserCheck, UserX
 } from 'lucide-react';
 import { Navbar } from '@/components/Navbar';
 import { supabase } from '@/integrations/supabase/client';
@@ -17,7 +17,7 @@ import { useToast } from '@/hooks/use-toast';
 
 // --- Type Definitions ---
 interface Profile { id: string; email: string | null; phone: string | null; role: string | null; name: string | null; }
-interface Sale { id: string; items: Json; total_amount: number; created_at: string; }
+interface Sale { id: string; items: Json; total_amount: number; created_at: string; customer_name: string; }
 interface InventoryItem { id: string; cost_price: number; }
 interface Expense { amount: number; }
 
@@ -73,12 +73,12 @@ const Dashboard = () => {
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const startDate = thirtyDaysAgo.toISOString();
 
-    // --- CORRECTED DATA FETCHING ---
-    // Fetch Sales Data
+    // --- Data Fetching (Corrected Logic) ---
     const { data: salesData = [], isLoading: isSalesLoading } = useQuery({
         queryKey: ['dashboardSales', user?.id, isAdmin],
         queryFn: async () => {
             if (!user) return [];
+            // If user is admin, fetch all sales. Otherwise, fetch only their own.
             let query = supabase.from('sales').select('items, total_amount, created_at, customer_name').gte('created_at', startDate);
             if (!isAdmin) {
                 query = query.eq('user_id', user.id);
@@ -90,10 +90,10 @@ const Dashboard = () => {
         enabled: !!user
     });
 
-    // Fetch All Admin Inventory for COGS calculation (only needed for admin view)
     const { data: inventoryData = [], isLoading: isInventoryLoading } = useQuery({
         queryKey: ['allAdminInventoryForDashboard'],
         queryFn: async () => {
+            // For COGS, get inventory from ALL admins to calculate true cost.
             const { data: adminProfiles, error: adminError } = await supabase.from('profiles').select('id').eq('role', 'admin');
             if (adminError) throw adminError;
             const adminIds = adminProfiles.map(p => p.id);
@@ -102,14 +102,14 @@ const Dashboard = () => {
             if (error) throw error;
             return data || [];
         },
-        enabled: isAdmin // Only run this query if the user is an admin
+        enabled: !!isAdmin // Only run this query if the user is an admin
     });
 
-    // Fetch Expenses Data
     const { data: expensesData = [], isLoading: isExpensesLoading } = useQuery({
         queryKey: ['dashboardExpenses', user?.id, isAdmin],
         queryFn: async () => {
             if (!user) return [];
+            // If user is admin, fetch ALL expenses. Otherwise, fetch only their own.
             let query = supabase.from('expenses').select('amount').gte('date', startDate.split('T')[0]);
             if (!isAdmin) {
                 query = query.eq('user_id', user.id);
@@ -121,18 +121,17 @@ const Dashboard = () => {
         enabled: !!user
     });
 
-    // --- CORRECTED CALCULATIONS using useMemo ---
+    // --- Calculations using useMemo for efficiency ---
     const dashboardData = useMemo(() => {
         const totalRevenue = salesData.reduce((sum, sale) => sum + Number(sale.total_amount), 0);
         const totalExpenses = expensesData.reduce((sum, exp) => sum + Number(exp.amount), 0);
         
-        // Create a map of inventory items for quick cost lookup
         const inventoryMap = new Map(inventoryData.map(item => [item.id, item.cost_price]));
         
         const totalCOGS = salesData.reduce((sum, sale) => {
             const items = parseSaleItems(sale.items);
             return sum + items.reduce((itemSum, soldItem) => {
-                const costPrice = inventoryMap.get(soldItem.id) || 0; // Look up cost from the map
+                const costPrice = inventoryMap.get(soldItem.id) || 0;
                 const quantity = soldItem.cart_quantity || 1;
                 return itemSum + (Number(costPrice) * quantity);
             }, 0);
@@ -142,7 +141,7 @@ const Dashboard = () => {
 
         const recentActivity = salesData
             .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-            .slice(0, 5) // Get 5 most recent
+            .slice(0, 5)
             .map(sale => ({
                 description: `Sale to ${sale.customer_name || 'Customer'}`,
                 amount: Number(sale.total_amount),
@@ -152,7 +151,6 @@ const Dashboard = () => {
         return { totalRevenue, totalCOGS, totalExpenses, netProfit, recentActivity };
     }, [salesData, inventoryData, expensesData]);
     
-    // Combined loading state
     const isLoading = isSalesLoading || (isAdmin && isInventoryLoading) || isExpensesLoading;
 
     // --- User Management Mutation & Handler ---
@@ -184,6 +182,7 @@ const Dashboard = () => {
         setIsSearching(false);
     };
 
+    // --- Card Data Arrays ---
     const statsCards = [
         { title: "Revenue", value: formatCurrency(dashboardData?.totalRevenue || 0), description: "Last 30 days", icon: TrendingUp, color: "text-green-600" },
         { title: "Cost of Goods", value: formatCurrency(dashboardData?.totalCOGS || 0), description: "Last 30 days", icon: Receipt, color: "text-orange-600" },
@@ -193,7 +192,7 @@ const Dashboard = () => {
 
     const quickActions = [
         { title: "Manage Inventory", description: "Add, edit or view stock", icon: Package, action: () => navigate('/inventory'), color: "bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 border-blue-200 dark:border-blue-800" },
-        { title: "Point of Sale", description: "Create new transactions", icon: ShoppingCart, action: () => navigate('/sales'), color: "bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/40 border-green-200 dark:border-green-800" },
+        { title: "Point of Sale", description: "Create new transactions", icon: ShoppingCart, action: () => navigate('/point-of-sale'), color: "bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/40 border-green-200 dark:border-green-800" },
         { title: "Track Expenses", description: "Record business costs", icon: Receipt, action: () => navigate('/expense'), color: "bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/40 border-orange-200 dark:border-orange-800" },
         { title: "View Reports", description: "Analyze your performance", icon: FileText, action: () => navigate('/reports'), color: "bg-purple-50 dark:bg-purple-900/20 hover:bg-purple-100 dark:hover:bg-purple-900/40 border-purple-200 dark:border-purple-800" }
     ];
