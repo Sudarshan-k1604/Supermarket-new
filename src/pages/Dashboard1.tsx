@@ -113,11 +113,11 @@ const CustomAreaTooltip = ({ active, payload, label }: any) => {
 
 // --- Main Dashboard Component ---
 const Dashboard = () => {
-    const { user, isAdmin } = useAuth();
+    const { user } = useAuth();
     const [date, setDate] = useState<DateRange | undefined>({ from: addDays(new Date(), -29), to: new Date() });
 
     const { data, isLoading, error } = useQuery({
-        queryKey: ['fullDashboard', user?.id, date, isAdmin],
+        queryKey: ['fullDashboard-allData', date],
         queryFn: async () => {
             if (!user?.id || !date?.from || !date?.to) throw new Error("User or date range is not defined.");
 
@@ -126,39 +126,35 @@ const Dashboard = () => {
             toDate.setHours(23, 59, 59, 999);
             const endDate = toDate.toISOString();
 
-            // --- Build Conditional Queries ---
-            let salesQuery = supabase.from('sales').select('items, total_amount, created_at')
+            // --- Queries now fetch ALL data for a company-wide report ---
+            const salesQuery = supabase.from('sales').select('items, total_amount, created_at')
                 .gte('created_at', date.from.toISOString())
                 .lte('created_at', endDate);
 
-            let expensesQuery = supabase.from('expenses').select('amount, category')
+            const expensesQuery = supabase.from('expenses').select('amount, category')
                 .gte('date', startDate)
                 .lte('date', format(date.to, 'yyyy-MM-dd'));
-
-            if (!isAdmin) {
-                salesQuery = salesQuery.eq('user_id', user.id);
-                expensesQuery = expensesQuery.eq('user_id', user.id);
-            }
             
-            const inventoryQuery = supabase.from('profiles').select('id').eq('role', 'admin').limit(1).single()
+            const inventoryQuery = supabase.from('profiles').select('id').eq('role', 'admin')
                 .then(adminRes => {
-                    if (adminRes.error) throw new Error("Could not find admin profile for inventory.");
-                    return supabase.from('inventory').select('id, item_name, unit_price, cost_price, quantity, low_stock_threshold').eq('user_id', adminRes.data.id);
+                    if (adminRes.error) throw adminRes.error;
+                    const adminIds = adminRes.data.map(p => p.id);
+                    if (adminIds.length === 0) return { data: [], error: null }; // Handle case with no admins
+                    return supabase.from('inventory').select('id, item_name, unit_price, cost_price, quantity, low_stock_threshold').in('user_id', adminIds);
                 });
 
-            // Step 1: Fetch the core data from your database first.
+            // Step 1: Fetch core data from your database first.
             const [salesRes, inventoryRes, expensesRes] = await Promise.all([
                 salesQuery,
                 inventoryQuery,
                 expensesQuery
             ]);
 
-            // Step 2: Check for errors before proceeding.
             if (salesRes.error) throw salesRes.error;
             if (inventoryRes.error) throw inventoryRes.error;
             if (expensesRes.error) throw expensesRes.error;
 
-            // Step 3: Now, invoke the Edge Functions, passing the fetched data in the 'body'.
+            // Step 2: Invoke Edge Functions with the complete sales data.
             const [forecastRes, insightsRes] = await Promise.all([
                 supabase.functions.invoke('forecasting', {
                     body: { salesData: salesRes.data }
@@ -171,7 +167,7 @@ const Dashboard = () => {
             if (forecastRes.error) throw forecastRes.error;
             if (insightsRes.error) throw insightsRes.error;
 
-            // Step 4: Process all the successful results.
+            // Step 3: Process all the successful results.
             const analytics = processAnalyticsData(salesRes.data, inventoryRes.data, expensesRes.data);
             
             return {
@@ -209,11 +205,11 @@ const Dashboard = () => {
                     <div>
                         <h1 className="text-2xl font-bold text-slate-900">Analytics Dashboard</h1>
                         <p className="text-sm text-slate-500 mt-1">
-                            {isAdmin ? "Your complete business performance overview." : "Your personal performance overview."}
+                            Your complete business performance overview.
                         </p>
                     </div>
                     <div className="flex items-center gap-2">
-                        {isAdmin && <Badge variant="default" className="bg-indigo-600 hover:bg-indigo-700 h-10"><ShieldCheck className="mr-2 h-4 w-4"/>Admin View</Badge>}
+                        <Badge variant="default" className="bg-indigo-600 hover:bg-indigo-700 h-10"><ShieldCheck className="mr-2 h-4 w-4"/>Admin View</Badge>
                         <Popover><PopoverTrigger asChild><Button id="date" variant={"outline"} className={cn("w-[280px] justify-start text-left font-normal", !date && "text-muted-foreground")}><CalendarIcon className="mr-2 h-4 w-4" />{date?.from ? (date.to ? (`${format(date.from, "LLL dd, y")} - ${format(date.to, "LLL dd, y")}`) : format(date.from, "LLL dd, y")) : (<span>Pick a date</span>)}</Button></PopoverTrigger><PopoverContent className="w-auto p-0" align="end"><Calendar initialFocus mode="range" defaultMonth={date?.from} selected={date} onSelect={setDate} numberOfMonths={2} /></PopoverContent></Popover>
                     </div>
                 </div>

@@ -4,28 +4,23 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Navbar } from '@/components/Navbar';
-import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
 import { 
   ResponsiveContainer, 
-  LineChart, 
-  Line, 
+  AreaChart, 
+  Area, 
   CartesianGrid, 
   XAxis, 
   YAxis, 
   Tooltip, 
   BarChart,
   Bar,
-  Legend,
-  Cell,
   PieChart,
   Pie,
+  Cell,
   Sector,
-  AreaChart,
-  Area,
   LabelList
 } from 'recharts';
 import { 
@@ -41,6 +36,7 @@ import {
     ShieldCheck
 } from 'lucide-react';
 import { Json } from '@/integrations/supabase/types';
+import { supabase } from '@/integrations/supabase/client';
 
 // --- Type Definitions ---
 interface SalesData { id: string; items: Json; total_amount: number; created_at: string; user_id: string; }
@@ -52,7 +48,7 @@ const PIE_COLORS = ['#3b82f6', '#10b981', '#f97316', '#ef4444', '#8b5cf6', '#ec4
 const formatCurrency = (value: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(value);
 const formatCompact = (value: number) => new Intl.NumberFormat('en-IN', { notation: 'compact', compactDisplay: 'short' }).format(value);
 
-// --- Custom Hook for Data Processing (No changes needed here) ---
+// --- Custom Hook for Data Processing ---
 const useAnalyticsData = (salesData: SalesData[], inventoryData: InventoryItem[], expensesData: Expense[]) => {
     const [processedData, setProcessedData] = useState<any>({
         totalRevenue: 0, totalCOGS: 0, totalExpenses: 0, netProfit: 0, inventoryValue: 0,
@@ -119,31 +115,22 @@ const useAnalyticsData = (salesData: SalesData[], inventoryData: InventoryItem[]
 
 // --- Main Reports Component ---
 const Reports = () => {
-  const { toast } = useToast();
-  // MODIFIED: Get isAdmin flag from auth context
-  const { user, isAdmin } = useAuth();
+  const { user } = useAuth();
   
   const [startDate, setStartDate] = useState(() => {
     const date = new Date();
-    date.setDate(1); // Default to start of the current month
+    date.setDate(1);
     return date.toISOString().split('T')[0];
   });
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
 
-  // --- MODIFIED: Data Fetching using React Query ---
   const { data: salesData = [] } = useQuery({ 
-    queryKey: ['sales', user?.id, startDate, endDate, isAdmin], 
+    queryKey: ['all-sales', startDate, endDate],
     queryFn: async () => { 
       if (!user?.id) return [];
-      let query = supabase.from('sales').select('*')
+      const { data, error } = await supabase.from('sales').select('*')
         .gte('created_at', `${startDate}T00:00:00.000Z`)
         .lte('created_at', `${endDate}T23:59:59.999Z`);
-      
-      if (!isAdmin) {
-        query = query.eq('user_id', user.id);
-      }
-      
-      const { data, error } = await query;
       if (error) throw error; 
       return data || []; 
     }, 
@@ -151,12 +138,14 @@ const Reports = () => {
   });
 
   const { data: inventoryData = [] } = useQuery({
-    queryKey: ['adminInventory'], // Use one key for the main business inventory
+    queryKey: ['all-admin-inventory'],
     queryFn: async () => {
-        const { data: adminProfile, error: adminError } = await supabase.from('profiles').select('id').eq('role', 'admin').limit(1).single();
-        if (adminError) throw new Error('Could not find admin user for inventory.');
+        const { data: adminProfiles, error: adminError } = await supabase.from('profiles').select('id').eq('role', 'admin');
+        if (adminError) throw adminError;
+        const adminIds = adminProfiles.map(p => p.id);
+        if (adminIds.length === 0) return [];
 
-        const { data, error } = await supabase.from('inventory').select('id, item_name, unit_price, cost_price, quantity').eq('user_id', adminProfile.id);
+        const { data, error } = await supabase.from('inventory').select('id, item_name, unit_price, cost_price, quantity').in('user_id', adminIds);
         if (error) throw error;
         return (data || []).map(item => ({ ...item, cost_price: Number(item.cost_price) || 0, quantity: Number(item.quantity) || 0 }));
     },
@@ -164,31 +153,21 @@ const Reports = () => {
   });
 
   const { data: expensesData = [] } = useQuery({ 
-    queryKey: ['expenses', user?.id, startDate, endDate, isAdmin], 
+    queryKey: ['all-expenses', startDate, endDate],
     queryFn: async () => {
       if (!user?.id) return [];
-      let query = supabase.from('expenses').select('*')
+      const { data, error } = await supabase.from('expenses').select('*')
         .gte('date', startDate)
         .lte('date', endDate);
-
-      if (!isAdmin) {
-        query = query.eq('user_id', user.id);
-      }
-
-      const { data, error } = await query;
       if (error) throw error; 
       return data || []; 
     }, 
     enabled: !!user?.id 
   });
 
-  // --- Use the custom hook for all calculations ---
   const { totalRevenue, totalCOGS, totalExpenses, netProfit, inventoryValue, topSellingProducts, lowStockItems, dailySalesTrend, expenseBreakdown } = useAnalyticsData(salesData, inventoryData, expensesData);
-  
-  // State for interactive Pie Chart
   const [activeIndex, setActiveIndex] = useState(0);
 
-  // --- Chart Tooltips & Formatters ---
   const ChartTooltip = ({ active, payload, label }: any) => { if (active && payload && payload.length) { return (<div className="rounded-lg border bg-background p-2 shadow-sm"><p className="text-sm font-medium text-muted-foreground">{label}</p><p className="font-bold text-foreground">{formatCurrency(payload[0].value)}</p></div>); } return null; };
   const formatYAxis = (tickItem: number) => `₹${(tickItem / 1000)}k`;
 
@@ -197,22 +176,18 @@ const Reports = () => {
       <Navbar />
       <main className="flex flex-1 flex-col gap-6 p-4 sm:px-6 md:gap-8 md:p-10">
         
-        {/* --- Header Section --- */}
         <div className="mx-auto flex w-full max-w-7xl flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
               <h1 className="text-3xl font-semibold">Business Analytics</h1>
-              <p className="text-muted-foreground">
-                {isAdmin ? "Company-wide performance overview." : "Your personal performance overview."}
-              </p>
+              <p className="text-muted-foreground">Company-wide performance overview.</p>
             </div>
             <div className="flex flex-wrap items-end gap-4">
-              {isAdmin && <Badge variant="default" className="bg-indigo-600 hover:bg-indigo-700"><ShieldCheck className="mr-2 h-4 w-4"/>Admin View</Badge>}
+              <Badge variant="default" className="bg-indigo-600 hover:bg-indigo-700"><ShieldCheck className="mr-2 h-4 w-4"/>Admin View</Badge>
               <div className="grid gap-2"><Label htmlFor="startDate">Start Date</Label><Input id="startDate" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} /></div>
               <div className="grid gap-2"><Label htmlFor="endDate">End Date</Label><Input id="endDate" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} /></div>
             </div>
         </div>
 
-        {/* --- KPI Cards --- */}
         <div className="mx-auto grid w-full max-w-7xl grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-5">
             <Card className="border-l-4 border-green-500 hover:shadow-lg transition-shadow"><CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-sm font-medium">Total Revenue</CardTitle><DollarSign className="h-4 w-4 text-muted-foreground" /></CardHeader><CardContent><div className="text-2xl font-bold">{formatCurrency(totalRevenue)}</div></CardContent></Card>
             <Card className="border-l-4 border-orange-500 hover:shadow-lg transition-shadow"><CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-sm font-medium">Cost of Goods</CardTitle><Receipt className="h-4 w-4 text-muted-foreground" /></CardHeader><CardContent><div className="text-2xl font-bold">{formatCurrency(totalCOGS)}</div></CardContent></Card>
@@ -221,9 +196,7 @@ const Reports = () => {
             <Card className="border-l-4 border-indigo-500 hover:shadow-lg transition-shadow"><CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-sm font-medium">Inventory Value</CardTitle><Package className="h-4 w-4 text-muted-foreground" /></CardHeader><CardContent><div className="text-2xl font-bold">{formatCurrency(inventoryValue)}</div></CardContent></Card>
         </div>
         
-        {/* --- Main Dashboard Grid --- */}
         <div className="mx-auto grid w-full max-w-7xl auto-rows-fr grid-cols-1 gap-6 lg:grid-cols-5">
-          {/* Daily Sales Trend - Main Chart */}
           <Card className="lg:col-span-5"><CardHeader><CardTitle className="flex items-center gap-2"><BarChart2 className="h-5 w-5"/> Daily Sales Trend</CardTitle><CardDescription>Revenue performance over the selected period.</CardDescription></CardHeader>
             <CardContent className="h-[24rem] w-full p-2">
                 <ResponsiveContainer>
@@ -239,7 +212,6 @@ const Reports = () => {
             </CardContent>
           </Card>
           
-          {/* Top Selling Products */}
           <Card className="lg:col-span-2"><CardHeader><CardTitle className="flex items-center gap-2"><Star className="h-5 w-5 text-yellow-400"/> Top Selling Products</CardTitle><CardDescription>By quantity sold in the selected period.</CardDescription></CardHeader>
             <CardContent>
               {topSellingProducts.length > 0 ? (
@@ -258,7 +230,6 @@ const Reports = () => {
             </CardContent>
           </Card>
 
-          {/* Expense Breakdown - Pie Chart */}
           <Card className="lg:col-span-3"><CardHeader><CardTitle className="flex items-center gap-2"><ShoppingCart className="h-5 w-5"/> Expense Breakdown</CardTitle><CardDescription>Distribution of costs by category.</CardDescription></CardHeader>
             <CardContent className="h-[240px] w-full p-0 flex items-center justify-center">
               {expenseBreakdown.length > 0 ? (
@@ -306,7 +277,6 @@ const Reports = () => {
             </CardContent>
           </Card>
           
-          {/* Low Stock Items */}
           <Card className="lg:col-span-5"><CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5 text-orange-400"/> Low Stock Alerts</CardTitle><CardDescription>These items need your attention. Consider reordering to prevent stockouts.</CardDescription></CardHeader>
             <CardContent>
               {lowStockItems.length > 0 ? (
@@ -322,7 +292,6 @@ const Reports = () => {
               ) : <p className="text-sm text-muted-foreground pt-10 text-center">✅ All items are well-stocked.</p>}
             </CardContent>
           </Card>
-
         </div>
       </main>
     </div>
