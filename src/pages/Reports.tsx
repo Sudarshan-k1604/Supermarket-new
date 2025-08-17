@@ -1,5 +1,3 @@
-// src/pages/Reports.tsx
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,7 +7,8 @@ import { Navbar } from '@/components/Navbar';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { Badge } from '@/components/ui/badge';
 import { 
   ResponsiveContainer, 
   LineChart, 
@@ -39,7 +38,7 @@ import {
     AlertTriangle, 
     Receipt, 
     Banknote,
-    ArrowRight
+    ShieldCheck
 } from 'lucide-react';
 import { Json } from '@/integrations/supabase/types';
 
@@ -53,7 +52,7 @@ const PIE_COLORS = ['#3b82f6', '#10b981', '#f97316', '#ef4444', '#8b5cf6', '#ec4
 const formatCurrency = (value: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(value);
 const formatCompact = (value: number) => new Intl.NumberFormat('en-IN', { notation: 'compact', compactDisplay: 'short' }).format(value);
 
-// --- Custom Hook for Data Processing ---
+// --- Custom Hook for Data Processing (No changes needed here) ---
 const useAnalyticsData = (salesData: SalesData[], inventoryData: InventoryItem[], expensesData: Expense[]) => {
     const [processedData, setProcessedData] = useState<any>({
         totalRevenue: 0, totalCOGS: 0, totalExpenses: 0, netProfit: 0, inventoryValue: 0,
@@ -63,7 +62,6 @@ const useAnalyticsData = (salesData: SalesData[], inventoryData: InventoryItem[]
     useEffect(() => {
         if (!salesData || !inventoryData || !expensesData) return;
 
-        // --- Financial Calculations ---
         const revenue = salesData.reduce((sum, sale) => sum + Number(sale.total_amount), 0);
         const expenses = expensesData.reduce((sum, exp) => sum + Number(exp.amount), 0);
         const inventoryMap = new Map(inventoryData.map(item => [item.id, item]));
@@ -81,7 +79,6 @@ const useAnalyticsData = (salesData: SalesData[], inventoryData: InventoryItem[]
             }, 0);
         }, 0);
 
-        // --- Analytics Calculations ---
         const productSales = new Map<string, number>();
         salesData.forEach(sale => parseSaleItems(sale.items).forEach(item => {
             productSales.set(item.item_name, (productSales.get(item.item_name) || 0) + (item.cart_quantity || 1));
@@ -123,8 +120,8 @@ const useAnalyticsData = (salesData: SalesData[], inventoryData: InventoryItem[]
 // --- Main Reports Component ---
 const Reports = () => {
   const { toast } = useToast();
-  const { user } = useAuth();
-  const queryClient = useQueryClient();
+  // MODIFIED: Get isAdmin flag from auth context
+  const { user, isAdmin } = useAuth();
   
   const [startDate, setStartDate] = useState(() => {
     const date = new Date();
@@ -133,10 +130,57 @@ const Reports = () => {
   });
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
 
-  // --- Data Fetching using React Query ---
-  const { data: salesData = [] } = useQuery({ queryKey: ['sales', user?.id, startDate, endDate], queryFn: async () => { if (!user?.id) return []; const { data, error } = await supabase.from('sales').select('*').eq('user_id', user.id).gte('created_at', `${startDate}T00:00:00.000Z`).lte('created_at', `${endDate}T23:59:59.999Z`); if (error) throw error; return data || []; }, enabled: !!user?.id });
-  const { data: inventoryData = [] } = useQuery({ queryKey: ['inventory', user?.id], queryFn: async () => { if (!user?.id) return []; const { data, error } = await supabase.from('inventory').select('id, item_name, unit_price, cost_price, quantity').eq('user_id', user.id); if (error) throw error; return (data || []).map(item => ({ ...item, cost_price: Number(item.cost_price) || 0, quantity: Number(item.quantity) || 0 })); }, enabled: !!user?.id });
-  const { data: expensesData = [] } = useQuery({ queryKey: ['expenses', user?.id, startDate, endDate], queryFn: async () => { if (!user?.id) return []; const { data, error } = await supabase.from('expenses').select('*').eq('user_id', user.id).gte('date', startDate).lte('date', endDate); if (error) throw error; return data || []; }, enabled: !!user?.id });
+  // --- MODIFIED: Data Fetching using React Query ---
+  const { data: salesData = [] } = useQuery({ 
+    queryKey: ['sales', user?.id, startDate, endDate, isAdmin], 
+    queryFn: async () => { 
+      if (!user?.id) return [];
+      let query = supabase.from('sales').select('*')
+        .gte('created_at', `${startDate}T00:00:00.000Z`)
+        .lte('created_at', `${endDate}T23:59:59.999Z`);
+      
+      if (!isAdmin) {
+        query = query.eq('user_id', user.id);
+      }
+      
+      const { data, error } = await query;
+      if (error) throw error; 
+      return data || []; 
+    }, 
+    enabled: !!user?.id 
+  });
+
+  const { data: inventoryData = [] } = useQuery({
+    queryKey: ['adminInventory'], // Use one key for the main business inventory
+    queryFn: async () => {
+        const { data: adminProfile, error: adminError } = await supabase.from('profiles').select('id').eq('role', 'admin').limit(1).single();
+        if (adminError) throw new Error('Could not find admin user for inventory.');
+
+        const { data, error } = await supabase.from('inventory').select('id, item_name, unit_price, cost_price, quantity').eq('user_id', adminProfile.id);
+        if (error) throw error;
+        return (data || []).map(item => ({ ...item, cost_price: Number(item.cost_price) || 0, quantity: Number(item.quantity) || 0 }));
+    },
+    enabled: !!user?.id
+  });
+
+  const { data: expensesData = [] } = useQuery({ 
+    queryKey: ['expenses', user?.id, startDate, endDate, isAdmin], 
+    queryFn: async () => {
+      if (!user?.id) return [];
+      let query = supabase.from('expenses').select('*')
+        .gte('date', startDate)
+        .lte('date', endDate);
+
+      if (!isAdmin) {
+        query = query.eq('user_id', user.id);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error; 
+      return data || []; 
+    }, 
+    enabled: !!user?.id 
+  });
 
   // --- Use the custom hook for all calculations ---
   const { totalRevenue, totalCOGS, totalExpenses, netProfit, inventoryValue, topSellingProducts, lowStockItems, dailySalesTrend, expenseBreakdown } = useAnalyticsData(salesData, inventoryData, expensesData);
@@ -156,12 +200,15 @@ const Reports = () => {
         {/* --- Header Section --- */}
         <div className="mx-auto flex w-full max-w-7xl flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
-                <h1 className="text-3xl font-semibold">Business Analytics</h1>
-                <p className="text-muted-foreground">Your financial and operational performance overview.</p>
+              <h1 className="text-3xl font-semibold">Business Analytics</h1>
+              <p className="text-muted-foreground">
+                {isAdmin ? "Company-wide performance overview." : "Your personal performance overview."}
+              </p>
             </div>
             <div className="flex flex-wrap items-end gap-4">
-                <div className="grid gap-2"><Label htmlFor="startDate">Start Date</Label><Input id="startDate" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} /></div>
-                <div className="grid gap-2"><Label htmlFor="endDate">End Date</Label><Input id="endDate" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} /></div>
+              {isAdmin && <Badge variant="default" className="bg-indigo-600 hover:bg-indigo-700"><ShieldCheck className="mr-2 h-4 w-4"/>Admin View</Badge>}
+              <div className="grid gap-2"><Label htmlFor="startDate">Start Date</Label><Input id="startDate" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} /></div>
+              <div className="grid gap-2"><Label htmlFor="endDate">End Date</Label><Input id="endDate" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} /></div>
             </div>
         </div>
 
@@ -240,7 +287,7 @@ const Reports = () => {
                                     <p className="text-xs text-muted-foreground">Total Expenses</p>
                                     <p className="text-xl font-bold">{formatCurrency(totalExpenses)}</p>
                                 </div>
-                            </foreignObject>
+                           </foreignObject>
                         </PieChart>
                     </ResponsiveContainer>
                     <div className="flex flex-col gap-2 pr-4">

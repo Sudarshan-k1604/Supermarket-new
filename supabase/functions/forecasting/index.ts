@@ -1,7 +1,6 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
 
-// Simple linear regression function
+// Simple linear regression function (this part is correct and remains)
 function linearRegression(data: { x: number; y: number }[]) {
   const n = data.length;
   if (n === 0) return { slope: 0, intercept: 0 };
@@ -26,29 +25,21 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_ANON_KEY')!,
-      { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
-    );
-    
-    // Get the current user
-    const { data: { user } } = await supabaseClient.auth.getUser();
-    if (!user) throw new Error("User not authenticated.");
+    // Step 1: Get the sales data from the request body sent by the browser.
+    const { salesData } = await req.json();
 
-    // Fetch all historical sales data
-    const { data: sales, error } = await supabaseClient
-      .from('sales')
-      .select('created_at, total_amount')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: true });
+    // Step 2: Validate the received data.
+    if (!salesData || !Array.isArray(salesData) || salesData.length < 2) {
+      // If there's not enough data, return a default success response.
+      return new Response(JSON.stringify({ historicalData: [], forecastData: [] }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    }
 
-    if (error) throw error;
-    if (sales.length < 2) throw new Error("Not enough sales data for forecasting.");
-
-    // Aggregate sales by day
+    // Step 3: Process the provided 'salesData' (no need to fetch from DB).
     const dailySales = new Map<string, number>();
-    sales.forEach(sale => {
+    salesData.forEach(sale => {
       const date = new Date(sale.created_at).toISOString().split('T')[0];
       dailySales.set(date, (dailySales.get(date) || 0) + sale.total_amount);
     });
@@ -59,22 +50,21 @@ Deno.serve(async (req) => {
         dayIndex: index,
     }));
     
-    // Prepare data for regression (x: day index, y: sales amount)
     const regressionData = historicalData.map(d => ({ x: d.dayIndex, y: d.sales }));
     const { slope, intercept } = linearRegression(regressionData);
 
-    // Forecast the next 7 days
+    // Step 4: Forecast the next 7 days.
     const lastDay = historicalData[historicalData.length - 1];
     const forecastData = [];
     for (let i = 1; i <= 7; i++) {
         const nextDayIndex = lastDay.dayIndex + i;
         const forecastValue = slope * nextDayIndex + intercept;
         const forecastDate = new Date(lastDay.date);
-        forecastDate.setDate(forecastDate.getDate() + i);
+        forecastDate.setDate(forecastDate.getDate() + i + 1); // Fix date calculation
         
         forecastData.push({
             date: forecastDate.toISOString().split('T')[0],
-            forecast: Math.max(0, forecastValue), // Ensure forecast is not negative
+            forecast: Math.max(0, forecastValue),
         });
     }
 

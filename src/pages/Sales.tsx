@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import {
   Plus, ShoppingCart, Download, Check, History, Loader2, Minus, User, QrCode, CreditCard,
-  Store, Sparkles, UploadCloud, ServerOff, CheckCircle, Search, ChevronLeft
+  Store, Sparkles, ServerOff, CheckCircle, Search, ChevronLeft, ShieldCheck
 } from 'lucide-react';
 import { Navbar } from '@/components/Navbar';
 import { useToast } from '@/hooks/use-toast';
@@ -28,7 +28,7 @@ interface InventoryItem { id: string; item_name: string; category: string; quant
 interface CartItem extends InventoryItem { cart_quantity: number; }
 interface Customer { name: string; phone: string; email: string; address: string; }
 interface CompanyInfo { name: string; address: string; phone: string; email: string; upi_id?: string; }
-interface Sale { id: string; created_at: string; customer_name: string; customer_phone: string; total_amount: number; items: any; bill_data: any; }
+interface Sale { id: string; created_at: string; customer_name: string; customer_phone: string; total_amount: number; items: any; bill_data: any; profiles?: { email: string } | null; }
 interface BillData extends OfflineBillData {}
 interface BillItem { id: string; item_name: string; cart_quantity: number; unit_price: number; total_price: number; }
 
@@ -41,14 +41,12 @@ const defaultCompanyInfo: CompanyInfo = {
   upi_id: 'srilakshmi-supermarket@okaxis',
 };
 
-// FIX: Re-added the missing currency formatting helper function
 const formatCurrency = (value: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(value);
-
 
 // --- Main Sales Component ---
 const Sales = () => {
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const queryClient = useQueryClient();
 
   // --- State Management ---
@@ -66,21 +64,31 @@ const Sales = () => {
 
   // --- Data Fetching & Mutations ---
   const { data: inventoryItems = [], isLoading: isInventoryLoading } = useQuery({
-    queryKey: ['inventory', user?.id],
+    queryKey: ['adminInventory'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('inventory').select('*').eq('user_id', user?.id).order('item_name');
-      if (error) throw new Error(error.message);
-      return data || [];
+        const { data: adminProfile, error: adminError } = await supabase.from('profiles').select('id').eq('role', 'admin').limit(1).single();
+        if (adminError) throw new Error('Could not find the admin user for inventory.');
+        
+        const { data, error } = await supabase.from('inventory').select('*').eq('user_id', adminProfile.id).order('item_name');
+        if (error) throw new Error(error.message);
+        return data || [];
     },
-    enabled: !!user?.id,
   });
 
   const { data: salesHistory = [] } = useQuery({
-    queryKey: ['sales-history', user?.id],
+    queryKey: ['sales-history', user?.id, isAdmin],
     queryFn: async () => {
-      const { data, error } = await supabase.from('sales').select('*').eq('user_id', user?.id).order('created_at', { ascending: false });
-      if (error) throw new Error(error.message);
-      return data as Sale[] || [];
+        if (!user) return [];
+        const selectStatement = isAdmin ? '*, profiles(email)' : '*';
+        let query = supabase.from('sales').select(selectStatement).order('created_at', { ascending: false });
+
+        if (!isAdmin) {
+            query = query.eq('user_id', user.id);
+        }
+        
+        const { data, error } = await query;
+        if (error) throw new Error(error.message);
+        return data as Sale[] || [];
     },
     enabled: !!user?.id,
   });
@@ -92,8 +100,8 @@ const Sales = () => {
       return data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['inventory', user?.id] });
-      queryClient.invalidateQueries({ queryKey: ['sales-history', user?.id] });
+      queryClient.invalidateQueries({ queryKey: ['adminInventory'] });
+      queryClient.invalidateQueries({ queryKey: ['sales-history', user?.id, isAdmin] });
     },
   });
   
@@ -123,7 +131,7 @@ const Sales = () => {
     const remaining = await getOfflineSales();
     setPendingSaleCount(remaining.length);
     setIsSyncing(false);
-  }, [isSyncing, user, processSaleMutation, toast, queryClient]);
+  }, [isSyncing, user, processSaleMutation, toast]);
 
   useEffect(() => {
     const updateOnlineStatus = () => {
@@ -312,7 +320,10 @@ const Sales = () => {
             </h1>
             <p className="text-gray-600 dark:text-gray-400 mt-1">{defaultCompanyInfo.name}</p>
           </div>
-          {isOffline && <Badge variant="destructive" className="flex items-center gap-1.5 py-1 px-2 animate-pulse"><ServerOff className="h-4 w-4"/>Offline Mode</Badge>}
+          <div className="flex items-center gap-4">
+            {isOffline && <Badge variant="destructive" className="flex items-center gap-1.5 py-1 px-2 animate-pulse"><ServerOff className="h-4 w-4"/>Offline Mode</Badge>}
+            {isAdmin && <Badge variant="default" className="flex items-center gap-1.5 py-1 px-2 bg-indigo-600 hover:bg-indigo-700"><ShieldCheck className="h-4 w-4"/>Admin View</Badge>}
+          </div>
         </header>
         
         <main className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -323,7 +334,7 @@ const Sales = () => {
               </CardHeader>
               <CardContent className="max-h-[70vh] overflow-y-auto p-4">
                 {isInventoryLoading ? <div className="text-center p-10"><Loader2 className="h-8 w-8 animate-spin mx-auto text-primary"/></div> :
-                 filteredInventoryItems.length > 0 ? (
+                  filteredInventoryItems.length > 0 ? (
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                     {filteredInventoryItems.map(item => (
                       <Card key={item.id} className="overflow-hidden hover:shadow-lg hover:border-primary transition-all cursor-pointer group" onClick={() => addToCart(item.id)}>
@@ -375,7 +386,7 @@ const Sales = () => {
                     <div><Label htmlFor="notes">Notes for Invoice</Label><Textarea id="notes" value={notes} onChange={e => setNotes(e.target.value)} rows={3} /></div>
                 </TabsContent>
                 <TabsContent value="history" className="p-0">
-                  <CustomerHistoryPanel salesHistory={salesHistory} onSaleSelect={viewSaleDetails} />
+                  <CustomerHistoryPanel salesHistory={salesHistory} onSaleSelect={viewSaleDetails} isAdmin={isAdmin} />
                 </TabsContent>
               </Tabs>
             </Card>
@@ -419,7 +430,7 @@ const Sales = () => {
 };
 
 // --- Smart History Panel Component ---
-const CustomerHistoryPanel = ({ salesHistory, onSaleSelect }: { salesHistory: Sale[], onSaleSelect: (sale: Sale) => void }) => {
+const CustomerHistoryPanel = ({ salesHistory, onSaleSelect, isAdmin }: { salesHistory: Sale[], onSaleSelect: (sale: Sale) => void, isAdmin: boolean }) => {
   const [selectedPhone, setSelectedPhone] = useState<string | null>(null);
   const customerGroups = useMemo(() => {
     const groups = new Map<string, { name: string; sales: Sale[] }>();
@@ -444,7 +455,11 @@ const CustomerHistoryPanel = ({ salesHistory, onSaleSelect }: { salesHistory: Sa
           {customerData?.sales.map(sale => (
             <div key={sale.id} className="text-sm p-3 border rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer" onClick={() => onSaleSelect(sale)}>
               <div className="flex justify-between font-semibold"><span>{sale.bill_data?.billId || 'INV-LEGACY'}</span><span>{formatCurrency(sale.total_amount)}</span></div>
-              <div className="flex justify-between text-xs text-muted-foreground mt-1"><span>{(sale.items as any[]).length} items</span><span>{format(new Date(sale.created_at), 'dd MMM, hh:mm a')}</span></div>
+              <div className="flex justify-between text-xs text-muted-foreground mt-1 space-x-2">
+                <span>{(sale.items as any[]).length} items</span>
+                {isAdmin && <span className="truncate" title={sale.profiles?.email || 'Unknown'}>By: {sale.profiles?.email?.split('@')[0] || 'N/A'}</span>}
+                <span className="flex-shrink-0">{format(new Date(sale.created_at), 'dd MMM, hh:mm a')}</span>
+              </div>
             </div>
           ))}
         </div>

@@ -4,8 +4,8 @@ import { addDays, format, parseISO } from 'date-fns';
 import { DateRange } from 'react-day-picker';
 import { motion } from 'framer-motion';
 import {
-    Calendar as CalendarIcon, DollarSign, Package, TrendingUp, TrendingDown, Users,
-    Target, ShoppingCart, Lightbulb, AlertTriangle, Cpu, Link as LinkIcon, Zap, BarChart2
+    Calendar as CalendarIcon, DollarSign, Package, TrendingUp, Users,
+    Target, ShoppingCart, Lightbulb, AlertTriangle, Cpu, Link as LinkIcon, Zap, ShieldCheck
 } from 'lucide-react';
 import {
     Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer,
@@ -24,7 +24,8 @@ import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Navbar } from '@/components/Navbar'; // Corrected Path
+import { Navbar } from '@/components/Navbar';
+import { Badge } from '@/components/ui/badge';
 
 // --- Type Definitions ---
 interface SalesRecord { id: string; items: Json; total_amount: number; created_at: string; }
@@ -35,6 +36,7 @@ interface InsightRule { antecedent: string; consequent: string; confidence: numb
 // --- Helper Functions ---
 const formatCurrency = (value: number) => `₹${value.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
+// --- Data Processing Function ---
 const processAnalyticsData = (sales: SalesRecord[], inventory: InventoryItem[], expenses: ExpenseRecord[]) => {
     const total_sales = sales.reduce((sum, sale) => sum + Number(sale.total_amount), 0);
     const total_expenses = expenses.reduce((sum, exp) => sum + Number(exp.amount), 0);
@@ -56,16 +58,14 @@ const processAnalyticsData = (sales: SalesRecord[], inventory: InventoryItem[], 
     const net_profit = total_sales - total_cogs - total_expenses;
     const profit_margin = total_sales > 0 ? (net_profit / total_sales) * 100 : 0;
     
-    // Performance Health Score Calculation (0-100)
     let healthScore = 0;
     if (profit_margin > 20) healthScore += 40;
     else if (profit_margin > 10) healthScore += 20;
     if (total_sales > 50000) healthScore += 30;
     else if (total_sales > 10000) healthScore += 15;
     if (total_sales > total_expenses * 1.5) healthScore += 30;
-    healthScore = Math.min(100, Math.max(0, healthScore)); // Clamp score
+    healthScore = Math.min(100, Math.max(0, healthScore));
 
-    // --- NEW: Calculate Top Selling & Profitable Items ---
     const productSales = new Map<string, { quantity: number; profit: number }>();
     sales.forEach(sale => {
         parseSaleItems(sale.items).forEach(item => {
@@ -80,16 +80,8 @@ const processAnalyticsData = (sales: SalesRecord[], inventory: InventoryItem[], 
         });
     });
 
-    const top_selling = Array.from(productSales.entries())
-        .sort(([, a], [, b]) => b.quantity - a.quantity)
-        .slice(0, 5)
-        .map(([name, data]) => ({ name, quantity: data.quantity }));
-
-    const profitable_items = Array.from(productSales.entries())
-        .sort(([, a], [, b]) => b.profit - a.profit)
-        .slice(0, 5)
-        .map(([name, data]) => ({ name, profit: Math.round(data.profit) }));
-
+    const top_selling = Array.from(productSales.entries()).sort(([, a], [, b]) => b.quantity - a.quantity).slice(0, 5).map(([name, data]) => ({ name, quantity: data.quantity }));
+    const profitable_items = Array.from(productSales.entries()).sort(([, a], [, b]) => b.profit - a.profit).slice(0, 5).map(([name, data]) => ({ name, profit: Math.round(data.profit) }));
     const low_stock = inventory.filter(item => item.quantity <= item.low_stock_threshold && item.quantity > 0);
 
     return {
@@ -121,38 +113,65 @@ const CustomAreaTooltip = ({ active, payload, label }: any) => {
 
 // --- Main Dashboard Component ---
 const Dashboard = () => {
-    const { user } = useAuth();
+    const { user, isAdmin } = useAuth();
     const [date, setDate] = useState<DateRange | undefined>({ from: addDays(new Date(), -29), to: new Date() });
 
     const { data, isLoading, error } = useQuery({
-        queryKey: ['fullDashboard', user?.id, date],
+        queryKey: ['fullDashboard', user?.id, date, isAdmin],
         queryFn: async () => {
             if (!user?.id || !date?.from || !date?.to) throw new Error("User or date range is not defined.");
-
-            const supabaseAccessToken = (await supabase.auth.getSession()).data.session?.access_token;
-            if (!supabaseAccessToken) throw new Error("Not authenticated.");
 
             const startDate = format(date.from, 'yyyy-MM-dd');
             const toDate = new Date(date.to);
             toDate.setHours(23, 59, 59, 999);
             const endDate = toDate.toISOString();
 
-            const commonHeaders = { Authorization: `Bearer ${supabaseAccessToken}` };
+            // --- Build Conditional Queries ---
+            let salesQuery = supabase.from('sales').select('items, total_amount, created_at')
+                .gte('created_at', date.from.toISOString())
+                .lte('created_at', endDate);
 
-            const [salesRes, inventoryRes, expensesRes, forecastRes, insightsRes] = await Promise.all([
-                supabase.from('sales').select('items, total_amount, created_at').eq('user_id', user.id).gte('created_at', date.from.toISOString()).lte('created_at', endDate),
-                supabase.from('inventory').select('id, item_name, unit_price, cost_price, quantity, low_stock_threshold').eq('user_id', user.id),
-                supabase.from('expenses').select('amount, category').eq('user_id', user.id).gte('date', startDate).lte('date', format(date.to, 'yyyy-MM-dd')),
-                supabase.functions.invoke('forecasting', { headers: commonHeaders }),
-                supabase.functions.invoke('apriori-insights', { headers: commonHeaders }),
+            let expensesQuery = supabase.from('expenses').select('amount, category')
+                .gte('date', startDate)
+                .lte('date', format(date.to, 'yyyy-MM-dd'));
+
+            if (!isAdmin) {
+                salesQuery = salesQuery.eq('user_id', user.id);
+                expensesQuery = expensesQuery.eq('user_id', user.id);
+            }
+            
+            const inventoryQuery = supabase.from('profiles').select('id').eq('role', 'admin').limit(1).single()
+                .then(adminRes => {
+                    if (adminRes.error) throw new Error("Could not find admin profile for inventory.");
+                    return supabase.from('inventory').select('id, item_name, unit_price, cost_price, quantity, low_stock_threshold').eq('user_id', adminRes.data.id);
+                });
+
+            // Step 1: Fetch the core data from your database first.
+            const [salesRes, inventoryRes, expensesRes] = await Promise.all([
+                salesQuery,
+                inventoryQuery,
+                expensesQuery
             ]);
 
+            // Step 2: Check for errors before proceeding.
             if (salesRes.error) throw salesRes.error;
             if (inventoryRes.error) throw inventoryRes.error;
             if (expensesRes.error) throw expensesRes.error;
+
+            // Step 3: Now, invoke the Edge Functions, passing the fetched data in the 'body'.
+            const [forecastRes, insightsRes] = await Promise.all([
+                supabase.functions.invoke('forecasting', {
+                    body: { salesData: salesRes.data }
+                }),
+                supabase.functions.invoke('apriori-insights', {
+                    body: { salesData: salesRes.data }
+                })
+            ]);
+
             if (forecastRes.error) throw forecastRes.error;
             if (insightsRes.error) throw insightsRes.error;
 
+            // Step 4: Process all the successful results.
             const analytics = processAnalyticsData(salesRes.data, inventoryRes.data, expensesRes.data);
             
             return {
@@ -173,9 +192,9 @@ const Dashboard = () => {
     const { financial_metrics, low_stock, top_selling, profitable_items } = analytics;
     
     const healthStatus = financial_metrics.healthScore > 75 ? { color: 'green', text: 'Excellent', icon: Zap } 
-                          : financial_metrics.healthScore > 50 ? { color: 'yellow', text: 'Good', icon: TrendingUp }
-                          : { color: 'red', text: 'Needs Attention', icon: AlertTriangle };
-                          
+                           : financial_metrics.healthScore > 50 ? { color: 'yellow', text: 'Good', icon: TrendingUp }
+                           : { color: 'red', text: 'Needs Attention', icon: AlertTriangle };
+                           
     const combinedChartData = [
         ...(forecast.historicalData || []).map((d: any) => ({ date: d.date, sales: d.sales })),
         ...(forecast.forecastData || []).map((d: any) => ({ date: d.date, forecast: d.forecast })),
@@ -189,9 +208,14 @@ const Dashboard = () => {
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row items-center justify-between gap-4">
                     <div>
                         <h1 className="text-2xl font-bold text-slate-900">Analytics Dashboard</h1>
-                        <p className="text-sm text-slate-500 mt-1">Your complete business performance overview.</p>
+                        <p className="text-sm text-slate-500 mt-1">
+                            {isAdmin ? "Your complete business performance overview." : "Your personal performance overview."}
+                        </p>
                     </div>
-                    <Popover><PopoverTrigger asChild><Button id="date" variant={"outline"} className={cn("w-[280px] justify-start text-left font-normal", !date && "text-muted-foreground")}><CalendarIcon className="mr-2 h-4 w-4" />{date?.from ? (date.to ? (`${format(date.from, "LLL dd, y")} - ${format(date.to, "LLL dd, y")}`) : format(date.from, "LLL dd, y")) : (<span>Pick a date</span>)}</Button></PopoverTrigger><PopoverContent className="w-auto p-0" align="end"><Calendar initialFocus mode="range" defaultMonth={date?.from} selected={date} onSelect={setDate} numberOfMonths={2} /></PopoverContent></Popover>
+                    <div className="flex items-center gap-2">
+                        {isAdmin && <Badge variant="default" className="bg-indigo-600 hover:bg-indigo-700 h-10"><ShieldCheck className="mr-2 h-4 w-4"/>Admin View</Badge>}
+                        <Popover><PopoverTrigger asChild><Button id="date" variant={"outline"} className={cn("w-[280px] justify-start text-left font-normal", !date && "text-muted-foreground")}><CalendarIcon className="mr-2 h-4 w-4" />{date?.from ? (date.to ? (`${format(date.from, "LLL dd, y")} - ${format(date.to, "LLL dd, y")}`) : format(date.from, "LLL dd, y")) : (<span>Pick a date</span>)}</Button></PopoverTrigger><PopoverContent className="w-auto p-0" align="end"><Calendar initialFocus mode="range" defaultMonth={date?.from} selected={date} onSelect={setDate} numberOfMonths={2} /></PopoverContent></Popover>
+                    </div>
                 </div>
             </header>
 
@@ -238,37 +262,36 @@ const Dashboard = () => {
                 </div>
                 
                 <div className="grid grid-cols-1 gap-6 mt-6">
-                     {/* Strategic Insights */}
-                     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3, duration: 0.5 }}>
-                         <Card>
-                             <CardHeader>
-                                 <CardTitle className="flex items-center gap-2"><Cpu className="text-purple-500"/>Strategic Insights</CardTitle>
-                                 <CardDescription>Actionable suggestions based on product association analysis.</CardDescription>
-                             </CardHeader>
-                             <CardContent className="space-y-4">
-                                 {insights && insights.length > 0 ? (
-                                     insights.slice(0, 3).map((rule: InsightRule, index: number) => (
-                                         <div key={index} className="flex items-start gap-4 p-3 bg-slate-100 rounded-lg">
-                                             <LinkIcon className="h-5 w-5 mt-1 text-purple-500 flex-shrink-0" />
-                                             <div>
-                                                 <p className="font-semibold text-slate-800">
-                                                     Customers who buy <span className="text-purple-600">{rule.antecedent}</span> also frequently buy <span className="text-purple-600">{rule.consequent}</span>.
-                                                 </p>
-                                                 <p className="text-xs text-slate-500">
-                                                     Consider bundling these items or placing them near each other. Confidence: <span className="font-bold">{(rule.confidence * 100).toFixed(0)}%</span>
-                                                 </p>
-                                             </div>
-                                         </div>
-                                     ))
-                                 ) : (
-                                     <p className="text-sm text-center text-slate-500 py-4">Not enough data to generate strategic insights yet.</p>
-                                 )}
-                             </CardContent>
-                         </Card>
-                     </motion.div>
+                         {/* Strategic Insights */}
+                         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3, duration: 0.5 }}>
+                              <Card>
+                                  <CardHeader>
+                                      <CardTitle className="flex items-center gap-2"><Cpu className="text-purple-500"/>Strategic Insights</CardTitle>
+                                      <CardDescription>Actionable suggestions based on product association analysis.</CardDescription>
+                                  </CardHeader>
+                                  <CardContent className="space-y-4">
+                                      {insights && insights.length > 0 ? (
+                                          insights.slice(0, 3).map((rule: InsightRule, index: number) => (
+                                              <div key={index} className="flex items-start gap-4 p-3 bg-slate-100 rounded-lg">
+                                                  <LinkIcon className="h-5 w-5 mt-1 text-purple-500 flex-shrink-0" />
+                                                  <div>
+                                                      <p className="font-semibold text-slate-800">
+                                                          Customers who buy <span className="text-purple-600">{rule.antecedent}</span> also frequently buy <span className="text-purple-600">{rule.consequent}</span>.
+                                                      </p>
+                                                      <p className="text-xs text-slate-500">
+                                                          Consider bundling these items or placing them near each other. Confidence: <span className="font-bold">{(rule.confidence * 100).toFixed(0)}%</span>
+                                                      </p>
+                                                  </div>
+                                              </div>
+                                          ))
+                                      ) : (
+                                          <p className="text-sm text-center text-slate-500 py-4">Not enough data to generate strategic insights yet.</p>
+                                      )}
+                                  </CardContent>
+                              </Card>
+                         </motion.div>
                 </div>
 
-                {/* --- NEW/MERGED SECTION --- */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
                     {/* Best Performers */}
                     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4, duration: 0.5 }}>
@@ -279,7 +302,7 @@ const Dashboard = () => {
                             </CardHeader>
                             <CardContent>
                                 {top_selling.length > 0 ? (
-                                     <ResponsiveContainer width="100%" height={250}>
+                                    <ResponsiveContainer width="100%" height={250}>
                                         <BarChart data={top_selling} layout="vertical" margin={{ left: 20 }}>
                                             <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2} />
                                             <XAxis type="number" hide />
@@ -289,7 +312,7 @@ const Dashboard = () => {
                                         </BarChart>
                                     </ResponsiveContainer>
                                 ) : (
-                                     <p className="text-sm text-center text-slate-500 py-4">No sales data for top products.</p>
+                                    <p className="text-sm text-center text-slate-500 py-4">No sales data for top products.</p>
                                 )}
                             </CardContent>
                         </Card>
@@ -314,7 +337,7 @@ const Dashboard = () => {
                                         </BarChart>
                                     </ResponsiveContainer>
                                 ) : (
-                                     <p className="text-sm text-center text-slate-500 py-4">No profit data available.</p>
+                                    <p className="text-sm text-center text-slate-500 py-4">No profit data available.</p>
                                 )}
                             </CardContent>
                         </Card>

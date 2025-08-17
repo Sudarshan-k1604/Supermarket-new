@@ -20,7 +20,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 
 // Icons from lucide-react
-import { Plus, Edit, Trash2, Search, Info, Package, BarChart, Box, AlertTriangle, XCircle, CheckCircle } from 'lucide-react';
+import { Plus, Edit, Trash2, Search, Package, Box, AlertTriangle, XCircle, CheckCircle } from 'lucide-react';
 
 // App-specific imports
 import { Navbar } from '@/components/Navbar';
@@ -29,7 +29,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
-// Define the shape of an inventory item
+// Define the shape of an inventory item, including profile data for admins
 interface InventoryItem {
   id: string;
   user_id?: string;
@@ -48,6 +48,8 @@ interface InventoryItem {
   sku?: string | null;
   created_at?: string;
   updated_at?: string;
+  // Added for admin view to show item owner
+  profiles?: { email: string } | null;
 }
 
 // Zod schema for form validation
@@ -276,7 +278,7 @@ const ProductForm = ({ onSubmit, initialData, isSubmitting }: { onSubmit: (data:
 
 const Inventory = () => {
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const queryClient = useQueryClient();
 
   const [dialogState, setDialogState] = useState<{ mode: 'add' | 'edit' | null; item: InventoryItem | null }>({ mode: null, item: null });
@@ -286,10 +288,18 @@ const Inventory = () => {
 
   // --- Data Fetching (React Query) ---
   const { data: inventoryItems = [], isLoading, isError, error } = useQuery({
-    queryKey: ['inventory', user?.id],
+    queryKey: ['inventory', user?.id, isAdmin],
     queryFn: async () => {
       if (!user?.id) return [];
-      const { data, error } = await supabase.from('inventory').select('*').eq('user_id', user.id).order('item_name', { ascending: true });
+
+      const selectStatement = isAdmin ? '*, profiles(email)' : '*';
+      let query = supabase.from('inventory').select(selectStatement).order('item_name', { ascending: true });
+
+      if (!isAdmin) {
+        query = query.eq('user_id', user.id);
+      }
+
+      const { data, error } = await query;
       if (error) throw error;
       return data as InventoryItem[];
     },
@@ -306,15 +316,23 @@ const Inventory = () => {
           result = await supabase.from('inventory').insert([{ ...payload, user_id: user.id }]).select().single();
         } else if (action === 'update') {
           const { id, ...updateData } = payload;
-          result = await supabase.from('inventory').update(updateData).eq('id', id).eq('user_id', user.id).select().single();
+          let updateQuery = supabase.from('inventory').update(updateData).eq('id', id);
+          if (!isAdmin) {
+            updateQuery = updateQuery.eq('user_id', user.id);
+          }
+          result = await updateQuery.select().single();
         } else if (action === 'delete') {
-          result = await supabase.from('inventory').delete().eq('id', payload.id).eq('user_id', user.id);
+          let deleteQuery = supabase.from('inventory').delete().eq('id', payload.id);
+          if (!isAdmin) {
+            deleteQuery = deleteQuery.eq('user_id', user.id);
+          }
+          result = await deleteQuery;
         }
         if (result?.error) throw result.error;
         return result?.data;
       },
       onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['inventory'] });
+        queryClient.invalidateQueries({ queryKey: ['inventory', user?.id, isAdmin] });
         setDialogState({ mode: null, item: null });
         toast({ title: "Success", description: `Item ${action === 'add' ? 'added' : action === 'update' ? 'updated' : 'deleted'} successfully` });
       },
@@ -350,7 +368,6 @@ const Inventory = () => {
 
   // --- Event Handlers ---
   const handleFormSubmit = (data: ProductFormData) => {
-    // Sanitize empty strings from optional fields to null for DB
     const sanitizedData = Object.fromEntries(
       Object.entries(data).map(([key, value]) => [key, value === '' ? null : value])
     );
@@ -397,7 +414,10 @@ const Inventory = () => {
           <Card className="bg-white border border-gray-200 rounded-xl shadow-sm">
             <CardHeader className="border-b border-gray-200">
               <CardTitle>Products ({filteredItems.length})</CardTitle>
-              <CardDescription>Showing {filteredItems.length} of {inventoryItems.length} total products.</CardDescription>
+              <CardDescription>
+                {isAdmin && <span className="font-semibold text-indigo-600">[Admin View] </span>}
+                Showing {filteredItems.length} of {inventoryItems.length} total products.
+              </CardDescription>
             </CardHeader>
             <CardContent className="p-0">
               <div className="overflow-x-auto">
@@ -405,6 +425,7 @@ const Inventory = () => {
                   <TableHeader className="bg-gray-50">
                     <TableRow>
                       <TableHead>Product</TableHead>
+                      {isAdmin && <TableHead>Owner</TableHead>}
                       <TableHead>Category</TableHead>
                       <TableHead>SKU</TableHead>
                       <TableHead className="text-center">Quantity</TableHead>
@@ -432,12 +453,19 @@ const Inventory = () => {
                                 </div>
                               </div>
                             </TableCell>
+                            {isAdmin && (
+                                <TableCell>
+                                    <div className="text-xs text-gray-600 truncate" title={item.profiles?.email || 'N/A'}>
+                                        {item.profiles?.email || 'N/A'}
+                                    </div>
+                                </TableCell>
+                            )}
                             <TableCell><Badge variant="outline">{item.category}</Badge></TableCell>
                             <TableCell><div className="font-mono text-sm">{item.sku || 'N/A'}</div></TableCell>
                             <TableCell className="text-center font-bold text-lg">{item.quantity}</TableCell>
                             <TableCell>
-                              <div>Selling: <span className="font-semibold">₹{item.unit_price}</span></div>
-                              <div className="text-xs text-gray-500">Cost: ₹{item.cost_price}</div>
+                              <div>Selling: <span className="font-semibold">₹{item.unit_price.toFixed(2)}</span></div>
+                              <div className="text-xs text-gray-500">Cost: ₹{item.cost_price.toFixed(2)}</div>
                             </TableCell>
                             <TableCell>
                               <div className={`flex items-center gap-2 text-sm font-medium text-${status.color}-600`}>
@@ -456,7 +484,7 @@ const Inventory = () => {
                       })
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={7} className="h-48 text-center">
+                        <TableCell colSpan={isAdmin ? 8 : 7} className="h-48 text-center">
                           <Package className="h-12 w-12 mx-auto text-gray-400" />
                           <h3 className="mt-4 text-lg font-medium text-gray-900">No products found</h3>
                           <p className="mt-1 text-gray-500">Try adjusting your search or filter.</p>
