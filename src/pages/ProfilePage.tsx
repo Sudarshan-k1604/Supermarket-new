@@ -80,7 +80,7 @@ export const ProfilePage = () => {
   const handleLogout = async () => {
     await signOut();
     // FIX: Use `navigate` to redirect the user
-    navigate('/login'); 
+    navigate('/'); 
   };
 
   if (authLoading || !profile) {

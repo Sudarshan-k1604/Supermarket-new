@@ -69,7 +69,7 @@ const Sales = () => {
         const { data: adminProfile, error: adminError } = await supabase.from('profiles').select('id').eq('role', 'admin').limit(1).single();
         if (adminError) throw new Error('Could not find the admin user for inventory.');
         
-        const { data, error } = await supabase.from('inventory').select('*').eq('user_id', adminProfile.id).order('item_name');
+        const { data, error } = await supabase.from('inventory').select('*').order('item_name');
         if (error) throw new Error(error.message);
         return data || [];
     },

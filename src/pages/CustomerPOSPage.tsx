@@ -77,7 +77,6 @@ const CustomerPOSPage = () => {
             const { data, error } = await supabase
                 .from('inventory')
                 .select('*')
-                .eq('user_id', adminId) // <-- FIX 2: Added this filter to get ONLY the admin's inventory
                 .order('item_name');
 
             if (error) {
