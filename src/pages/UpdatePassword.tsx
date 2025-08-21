@@ -1,91 +1,98 @@
-// src/pages/UpdatePassword.tsx
+import React, { useEffect, useState } from 'react';
+import { supabase } from '@/integrations/supabase/client';
+import { Link, useNavigate } from 'react-router-dom';
 
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Lock } from 'lucide-react';
-
-const UpdatePassword = () => {
+const UpdatePassword: React.FC = () => {
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const { updateUserPassword } = useAuth();
+  const [confirm, setConfirm] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   const navigate = useNavigate();
-  const { toast } = useToast();
 
-  const handleResetPassword = async (e: React.FormEvent) => {
+  // Optional: surface that we've entered recovery flow
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setMsg('Recovery link verified. You can now set a new password.');
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password !== confirmPassword) {
-      toast({ title: "Error", description: "Passwords do not match.", variant: "destructive" });
+    setErr(null);
+    setMsg(null);
+
+    if (password.length < 8) {
+      setErr('Password must be at least 8 characters.');
       return;
     }
-    if (password.length < 6) {
-      toast({ title: "Error", description: "Password must be at least 6 characters.", variant: "destructive" });
+    if (password !== confirm) {
+      setErr('Passwords do not match.');
       return;
     }
 
-    setLoading(true);
-    const { error } = await updateUserPassword(password);
+    setBusy(true);
+    const { error } = await supabase.auth.updateUser({ password });
+    setBusy(false);
 
     if (error) {
-      toast({ title: "Error resetting password", description: error.message, variant: "destructive" });
-    } else {
-      toast({ title: "Success!", description: "Your password has been updated. You have been redirected to the dashboard." });
-      navigate('/dashboard');
+      setErr(error.message);
+      return;
     }
-    setLoading(false);
+
+    setMsg('Password updated successfully. Redirecting to login…');
+    // Give a brief moment and navigate to auth/login
+    setTimeout(() => navigate('/auth', { replace: true }), 1200);
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-      <Card className="w-full max-w-md shadow-xl border-0">
-        <CardHeader className="text-center">
-          <CardTitle className="text-2xl">Create a New Password</CardTitle>
-          <CardDescription>Enter and confirm your new password below.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleResetPassword} className="space-y-4 pt-4">
-            <div className="space-y-2">
-              <Label htmlFor="new-password">New Password</Label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                <Input 
-                  id="new-password" 
-                  type="password" 
-                  placeholder="Enter your new password" 
-                  value={password} 
-                  onChange={(e) => setPassword(e.target.value)} 
-                  className="pl-10" 
-                  required 
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="confirm-password">Confirm New Password</Label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                <Input 
-                  id="confirm-password" 
-                  type="password" 
-                  placeholder="Confirm your new password" 
-                  value={confirmPassword} 
-                  onChange={(e) => setConfirmPassword(e.target.value)} 
-                  className="pl-10" 
-                  required 
-                />
-              </div>
-            </div>
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "Updating..." : "Update Password"}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+    <div className="mx-auto my-16 max-w-md rounded-2xl border p-6 shadow-sm">
+      <h1 className="mb-2 text-2xl font-semibold">Set a new password</h1>
+      <p className="mb-6 text-sm text-muted-foreground">
+        This page opens from the password reset email link.
+      </p>
+
+      <form onSubmit={submit} className="space-y-4">
+        <div>
+          <label className="mb-1 block text-sm font-medium">New password</label>
+          <input
+            type="password"
+            className="w-full rounded-xl border p-3"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Enter new password"
+            required
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium">Confirm password</label>
+          <input
+            type="password"
+            className="w-full rounded-xl border p-3"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            placeholder="Re-enter new password"
+            required
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={busy}
+          className="w-full rounded-xl bg-primary p-3 text-white disabled:opacity-50"
+        >
+          {busy ? 'Updating…' : 'Update password'}
+        </button>
+      </form>
+
+      {err && <p className="mt-4 text-sm text-red-600">{err}</p>}
+      {msg && <p className="mt-4 text-sm text-green-600">{msg}</p>}
+
+      <div className="mt-6 text-center text-sm">
+        <Link className="underline" to="/auth">Back to login</Link>
+      </div>
     </div>
   );
 };
