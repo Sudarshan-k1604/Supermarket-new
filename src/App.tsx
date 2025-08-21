@@ -19,7 +19,7 @@ import Dashboard1 from "./pages/Dashboard1";
 import CustomerDashboard from "./pages/d1";
 import { ProfilePage } from './pages/ProfilePage'; 
 import { Loader2 } from "lucide-react"; // --- NEW: Import the loader icon ---
-
+import UpdatePassword from "./pages/UpdatePassword";
 const queryClient = new QueryClient();
 
 // --- NEW: All your routing logic is moved into this component ---
@@ -46,7 +46,10 @@ const AppRoutes = () => {
         <Route path="/expense" element={<ProtectedRoute><AdminRoute><Expenses /></AdminRoute></ProtectedRoute>} />
         <Route path="/AdvancedAnalytics" element={<ProtectedRoute><AdminRoute><Dashboard1 /></AdminRoute></ProtectedRoute>} />
         <Route path="/reports" element={<ProtectedRoute><AdminRoute><Reports /></AdminRoute></ProtectedRoute>} />
-        
+        <Route 
+          path="/update-password" 
+          element={<ProtectedRoute><UpdatePassword /></ProtectedRoute>} 
+        />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>

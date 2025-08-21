@@ -92,11 +92,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   
   // NEW: Function to request a password reset email
   const requestPasswordReset = async (email: string) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/`, // Redirects to your auth page
-    });
-    return { error };
-  };
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    // CHANGE THIS LINE to point to the new dedicated page
+    redirectTo: `${window.location.origin}/update-password`, 
+  });
+  return { error };
+};
 
   // NEW: Function to update the user's password after they click the link
   const updateUserPassword = async (password: string) => {
