@@ -34,6 +34,10 @@ const AppRoutes = () => {
   return (
     <BrowserRouter>
       <Routes>
+        <Route 
+          path="/update-password" 
+          element={<ProtectedRoute><UpdatePassword /></ProtectedRoute>} 
+        />
         {/* --- MODIFIED: Redirect logic for logged-in vs. logged-out users --- */}
         <Route path="/" element={!session ? <Index /> : <Navigate to="/dashboard" replace />} />
         <Route path="/auth" element={!session ? <Auth /> : <Navigate to="/dashboard" replace />} />
@@ -46,10 +50,7 @@ const AppRoutes = () => {
         <Route path="/expense" element={<ProtectedRoute><AdminRoute><Expenses /></AdminRoute></ProtectedRoute>} />
         <Route path="/AdvancedAnalytics" element={<ProtectedRoute><AdminRoute><Dashboard1 /></AdminRoute></ProtectedRoute>} />
         <Route path="/reports" element={<ProtectedRoute><AdminRoute><Reports /></AdminRoute></ProtectedRoute>} />
-        <Route 
-          path="/update-password" 
-          element={<ProtectedRoute><UpdatePassword /></ProtectedRoute>} 
-        />
+        
         <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
