@@ -182,7 +182,7 @@ const Auth = () => {
         <div className="text-center mb-8">
           <div className="flex items-center justify-center space-x-2 mb-4">
             <div className="bg-blue-600 p-3 rounded-xl"><Package className="h-8 w-8 text-white" /></div>
-            <h1 className="text-3xl font-bold text-gray-900">VendorFlow</h1>
+            <h1 className="text-3xl font-bold text-gray-900">SuperMarket</h1>
           </div>
           <p className="text-gray-600">Manage your business with ease</p>
         </div>

@@ -5,6 +5,7 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import type { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 
+// 1. Add is_staff to the Profile interface
 interface Profile {
   id: string;
   email?: string;
@@ -12,6 +13,7 @@ interface Profile {
   phone?: string;
   address?: string;
   role?: string;
+  is_staff?: boolean; // <-- MODIFIED: Add new property
 }
 
 interface AuthContextType {
@@ -20,6 +22,7 @@ interface AuthContextType {
   profile: Profile | null;
   loading: boolean;
   isAdmin: boolean;
+  isStaff: boolean; // <-- ADDED: Expose isStaff status
   signIn: (email: string, password: string) => Promise<{ error: any }>;
   signUp: (email: string, password: string) => Promise<{ error: any }>;
   signOut: () => Promise<void>;
@@ -56,7 +59,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
-      // Do not flip loading to true/false here; the page level can handle spinners
     });
 
     return () => {
@@ -71,6 +73,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const run = async () => {
       if (user) {
         setLoading(true);
+        // The select('*') will automatically fetch the new is_staff column
         const { data, error } = await supabase
           .from('profiles')
           .select('*')
@@ -94,7 +97,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => { active = false; };
   }, [user]);
 
+  // 2. Calculate isAdmin and isStaff statuses
   const isAdmin = useMemo(() => profile?.role === 'admin', [profile]);
+  
+  // <-- ADDED: Calculate isStaff status
+  const isStaff = useMemo(() => {
+    // A user is considered 'staff' only if their role is 'admin' AND is_staff is true.
+    return profile?.role === 'admin' && profile?.is_staff === true;
+  }, [profile]);
+
 
   const signIn = async (email: string, password: string) => ({
     error: (await supabase.auth.signInWithPassword({ email, password })).error,
@@ -140,12 +151,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { error };
   };
 
+  // 3. Provide isStaff in the context value
   const value: AuthContextType = {
     user,
     session,
     profile,
     loading,
     isAdmin,
+    isStaff, // <-- MODIFIED: Add isStaff to the context value
     signIn,
     signUp,
     signOut,
@@ -154,8 +167,5 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     updateUserPassword,
   };
 
-  // NOTE: intentionally do NOT early-return a spinner here.
-  // App-level gate will handle loading so public routes (like /update-password) still render.
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
-

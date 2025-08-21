@@ -6,9 +6,10 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import AdminRoute from '@/components/AdminRoute';
+import StrictAdminRoute from './pages/StrictAdminRoute'; // <-- Keep this new import
 import Index from './pages/Index';
 import Auth from './pages/Auth';
-import Dashboard from './pages/Dashboard';
+import Dashboard from './pages/Dashboard'; // <-- Your original Dashboard component
 import Inventory from './pages/Inventory';
 import Sales from './pages/Sales';
 import CustomerPOSPage from './pages/CustomerPOSPage';
@@ -31,21 +32,23 @@ const AppRoutes = () => {
 
   return (
     <Routes>
-      {/* PUBLIC: must NOT be wrapped to allow recovery session attach */}
+      {/* PUBLIC ROUTES */}
       <Route path="/update-password" element={<UpdatePassword />} />
-
-      {/* Public landing & auth pages */}
       <Route path="/" element={!session ? <Index /> : <Navigate to="/dashboard" replace />} />
       <Route path="/auth" element={!session ? <Auth /> : <Navigate to="/dashboard" replace />} />
 
-      {/* Protected routes */}
+      {/* PROTECTED ROUTES (This is the key section to keep) */}
       <Route path="/dashboard" element={<ProtectedRoute><DashboardRoute /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
-      <Route path="/sales" element={<ProtectedRoute><SalesRoute /></ProtectedRoute>} />
+      
+      {/* Accessible to Admins AND Staff */}
       <Route path="/inventory" element={<ProtectedRoute><AdminRoute><Inventory /></AdminRoute></ProtectedRoute>} />
-      <Route path="/expense" element={<ProtectedRoute><AdminRoute><Expenses /></AdminRoute></ProtectedRoute>} />
-      <Route path="/AdvancedAnalytics" element={<ProtectedRoute><AdminRoute><Dashboard1 /></AdminRoute></ProtectedRoute>} />
-      <Route path="/reports" element={<ProtectedRoute><AdminRoute><Reports /></AdminRoute></ProtectedRoute>} />
+      <Route path="/sales" element={<ProtectedRoute><SalesRoute /></ProtectedRoute>} />
+
+      {/* Accessible ONLY to "pure" Admins */}
+      <Route path="/expense" element={<ProtectedRoute><StrictAdminRoute><Expenses /></StrictAdminRoute></ProtectedRoute>} />
+      <Route path="/AdvancedAnalytics" element={<ProtectedRoute><StrictAdminRoute><Dashboard1 /></StrictAdminRoute></ProtectedRoute>} />
+      <Route path="/reports" element={<ProtectedRoute><StrictAdminRoute><Reports /></StrictAdminRoute></ProtectedRoute>} />
 
       <Route path="*" element={<NotFound />} />
     </Routes>
@@ -70,7 +73,6 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <Sonner />
-        {/* BrowserRouter should wrap content that uses routing */}
         <BrowserRouter>
           <AppContent />
         </BrowserRouter>
